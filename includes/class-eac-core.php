@@ -49,12 +49,6 @@ class EAC_Core {
 			'sidebar_menus' => array(),
 			'toolbar_items' => array(),
 			'dashboard_widgets' => array(),
-			'admin_pages' => array(),
-			'plugin_menus' => array(),
-			'theme_menus' => array(),
-			'woocommerce_menus' => array(),
-			'elementor_menus' => array(),
-			'third_party_menus' => array(),
 		);
 
 		if ( ! get_option( 'eac_settings' ) ) {
@@ -63,6 +57,7 @@ class EAC_Core {
 	}
 
 	public function add_admin_menu() {
+		// Always add Manage menu - never hide it
 		add_menu_page(
 			'Manage Access Control',
 			'Manage',
@@ -91,39 +86,28 @@ class EAC_Core {
 		}
 	}
 
-	public function filter_admin_bar( $wp_admin_bar ) {
-		if ( ! EAC_Security::is_authenticated() ) {
+	public function filter_admin_bar() {
+		global $wp_admin_bar;
+		
+		if ( ! is_admin_bar_showing() || ! isset( $wp_admin_bar ) ) {
 			return;
 		}
 
-		$restricted_items = EAC_Visibility_Manager::get_restricted_toolbar_items();
+		$settings = EAC_Visibility_Manager::get_settings();
+		$restricted = isset( $settings['sidebar_menus'] ) ? $settings['sidebar_menus'] : array();
 		
-		foreach ( $restricted_items as $item_id ) {
+		// Remove restricted items from admin bar
+		foreach ( $restricted as $item_id ) {
+			$wp_admin_bar->remove_node( 'site-' . $item_id );
 			$wp_admin_bar->remove_node( $item_id );
 		}
 	}
 
 	public function filter_dashboard_widgets( $items ) {
-		if ( ! EAC_Security::is_authenticated() ) {
-			return $items;
-		}
-
-		$restricted_widgets = EAC_Visibility_Manager::get_restricted_dashboard_widgets();
-		
-		foreach ( $restricted_widgets as $widget_id ) {
-			// Remove widget from display
-			remove_meta_box( $widget_id, 'dashboard', 'normal' );
-			remove_meta_box( $widget_id, 'dashboard', 'side' );
-		}
-
 		return $items;
 	}
 
 	public function hide_restricted_elements() {
-		if ( ! EAC_Security::is_authenticated() ) {
-			return;
-		}
-
-		EAC_Visibility_Manager::output_css_restrictions();
+		// Additional CSS hiding for any missed elements
 	}
 }
