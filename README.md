@@ -1,37 +1,33 @@
-# WordPress Plugins Repository
+# Enterprise Access Control Plugin
 
-This repository contains high-quality WordPress plugins.
+Simple WordPress menu visibility control with password protection.
 
-## Plugins
+## Features
 
-### Enterprise Access Control & Admin Protection Plugin v1.0.0
+- ✅ Hide/Show WordPress admin menus
+- 🔐 Password-protected access
+- 💾 Persistent settings
+- 🎯 Easy to use interface
 
-**Description:** Enterprise-level access control and admin protection plugin for WordPress. Control who sees what in WordPress admin panel.
+## Installation
 
-**Features:**
-- Password-protected settings (Default: 99999999999999999999)
-- Hide/Show sidebar menus
-- Control toolbar items
-- Manage dashboard widgets
-- Direct URL access protection
-- WooCommerce integration
-- Elementor integration
-- Zero performance impact
-- Native WordPress design
+1. Upload to `/wp-content/plugins/`
+2. Activate from Plugins page
+3. Go to Menu Manager
+4. Default password: `123456`
 
-**Installation:**
-1. Download `enterprise-access-control.zip`
-2. Go to WordPress admin → Plugins → Add New → Upload Plugin
-3. Choose the ZIP file and install
-4. Activate the plugin
-5. Click "Manage" in the sidebar
-6. Enter password: `99999999999999999999`
-7. Configure access control settings
+## Usage
 
-**Default Password:** `99999999999999999999`
+1. Click "Menu Manager" in WordPress admin
+2. Enter password (default: 123456)
+3. Check menus to SHOW or HIDE
+4. Click "Save" button
+5. Menus will be hidden/shown immediately
 
-**Requirements:**
-- WordPress 5.0+
-- PHP 7.2+
+## Default Password
 
-**License:** GPL v2 or later
+`123456`
+
+## License
+
+GPL v2 or later
