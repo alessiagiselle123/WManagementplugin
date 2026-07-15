@@ -1,391 +1,118 @@
 <?php
 /**
- * EAC Admin Class
- * Admin interface and settings management
+ * EAC Admin - Main admin interface
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+    exit;
 }
 
 class EAC_Admin {
-	private static $instance = null;
+    public static function init() {
+        add_action( 'admin_menu', array( __CLASS__, 'add_admin_menu' ) );
+    }
 
-	public static function get_instance() {
-		if ( null === self::$instance ) {
-			self::$instance = new self();
-		}
-		return self::$instance;
-	}
+    public static function add_admin_menu() {
+        add_menu_page(
+            'Enterprise Access Control',
+            'Access Control',
+            'manage_options',
+            'eac-control',
+            array( __CLASS__, 'render_page' ),
+            'dashicons-shield',
+            2
+        );
+    }
 
-	private function __construct() {
-		add_action( 'wp_ajax_nopriv_eac_update_settings', array( $this, 'ajax_update_settings' ) );
-		add_action( 'wp_ajax_eac_update_settings', array( $this, 'ajax_update_settings' ) );
-		add_action( 'wp_ajax_nopriv_eac_change_password', array( $this, 'ajax_change_password' ) );
-		add_action( 'wp_ajax_eac_change_password', array( $this, 'ajax_change_password' ) );
-	}
+    public static function render_page() {
+        // Check authentication
+        if ( ! isset( $_SESSION ) ) {
+            session_start();
+        }
 
-	public function render_settings_page() {
-		$menus = EAC_Menu_Detector::get_all_admin_menus();
-		$settings = EAC_Visibility_Manager::get_settings();
-		$restricted = isset( $settings['sidebar_menus'] ) ? $settings['sidebar_menus'] : array();
-		?>
-		<div class="wrap">
-			<h1><?php esc_html_e( 'Enterprise Access Control Settings', 'enterprise-access-control' ); ?></h1>
-			<p style="color: #666; font-size: 14px;">Only selected items will be visible in WordPress sidebar. All other items will be hidden.</p>
-			
-			<nav class="nav-tab-wrapper">
-				<a href="#" class="nav-tab nav-tab-active" data-tab="show-menu"><?php esc_html_e( 'SHOW - Visible Items', 'enterprise-access-control' ); ?></a>
-				<a href="#" class="nav-tab" data-tab="hide-menu"><?php esc_html_e( 'HIDE - Hidden Items', 'enterprise-access-control' ); ?></a>
-				<a href="#" class="nav-tab" data-tab="security"><?php esc_html_e( 'Security', 'enterprise-access-control' ); ?></a>
-			</nav>
+        if ( ! EAC_Settings::is_authenticated() ) {
+            EAC_Security::render_password_page();
+            return;
+        }
 
-			<div class="eac-settings-container" style="background: #fff; border: 1px solid #ccc; border-top: none; padding: 20px;">
-				<?php $this->render_show_menu_tab( $menus, $restricted ); ?>
-				<?php $this->render_hide_menu_tab( $menus, $restricted ); ?>
-				<?php $this->render_security_tab(); ?>
-			</div>
-		</div>
+        // Check for logout
+        if ( isset( $_GET['eac_logout'] ) && sanitize_text_field( $_GET['eac_logout'] ) === '1' ) {
+            EAC_Settings::logout();
+            wp_redirect( admin_url( 'admin.php?page=eac-control' ) );
+            exit;
+        }
 
-		<style>
-			.eac-tab-content { display: none; }
-			.eac-tab-content.active { display: block; }
-			.eac-checkbox-list { list-style: none; margin: 0; padding: 0; }
-			.eac-checkbox-list li { padding: 10px; border-bottom: 1px solid #f1f1f1; margin: 0; }
-			.eac-checkbox-list li:last-child { border-bottom: none; }
-			.eac-checkbox-list li:hover { background: #f9f9f9; }
-			.eac-checkbox-list input[type="checkbox"] { margin-right: 10px; cursor: pointer; width: 18px; height: 18px; }
-			.eac-checkbox-list label { cursor: pointer; display: inline-block; margin: 0; padding: 0; font-weight: 500; color: #333; }
-			.eac-button-group { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
-			.eac-button { background-color: #0073aa; border: 1px solid #0073aa; color: #fff; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background-color 0.2s; margin-right: 10px; border-style: solid; font-weight: 600; }
-			.eac-button:hover { background-color: #005a87; }
-			.eac-button:active { background-color: #004a6f; }
-			.eac-status-message { padding: 15px; border-radius: 4px; margin-bottom: 20px; display: none; font-weight: 500; } 
-			.eac-status-message.success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; display: block !important; }
-			.eac-status-message.error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; display: block !important; }
-			.eac-info-box { background: #e7f3ff; border-left: 4px solid #0073aa; padding: 12px; margin-bottom: 15px; border-radius: 3px; }
-			.eac-info-box p { margin: 0; font-size: 14px; color: #0073aa; }
-		</style>
+        // Handle form submission
+        if ( isset( $_POST['eac_save_menus'] ) ) {
+            check_admin_referer( 'eac_nonce' );
+            
+            $hidden_menus = isset( $_POST['hidden_menus'] ) ? array_map( 'sanitize_text_field', (array) $_POST['hidden_menus'] ) : array();
+            EAC_Settings::set_hidden_menus( $hidden_menus );
+            $saved = true;
+        } else {
+            $saved = false;
+        }
 
-		<script>
-			var eacNonce = '<?php echo wp_create_nonce( 'eac_nonce' ); ?>';
-			
-			document.addEventListener('DOMContentLoaded', function() {
-				console.log('EAC Settings Loaded');
-				
-				// Tab navigation
-				document.querySelectorAll('.nav-tab').forEach(tab => {
-					tab.addEventListener('click', function(e) {
-						e.preventDefault();
-						const tabName = this.getAttribute('data-tab');
-						document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('nav-tab-active'));
-						document.querySelectorAll('.eac-tab-content').forEach(t => t.classList.remove('active'));
-						this.classList.add('nav-tab-active');
-						document.getElementById('eac-tab-' + tabName).classList.add('active');
-					});
-				});
+        $all_menus = EAC_Menu_Manager::get_all_menus();
+        $hidden_menus = EAC_Settings::get_hidden_menus();
+        ?>
+        <div class="wrap" style="background: #f1f1f1; padding: 20px; border-radius: 8px;">
+            <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+                    <div>
+                        <h1 style="margin: 0; color: #333; font-size: 32px;">🛡️ Menu Visibility Control</h1>
+                        <p style="color: #666; margin: 8px 0 0 0; font-size: 14px;">Select which menus to hide from WordPress dashboard</p>
+                    </div>
+                    <a href="<?php echo wp_nonce_url( admin_url( 'admin.php?page=eac-control&eac_logout=1' ), 'eac_nonce' ); ?>" class="button" style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight: 600;">
+                        🚪 Logout
+                    </a>
+                </div>
 
-				// Select All buttons
-				document.querySelectorAll('.eac-select-all').forEach(btn => {
-					btn.addEventListener('click', function(e) {
-						e.preventDefault();
-						const container = this.closest('.eac-tab-content');
-						const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-						checkboxes.forEach(cb => cb.checked = true);
-					});
-				});
+                <?php if ( $saved ) : ?>
+                    <div style="background: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 15px; border-radius: 4px; margin-bottom: 20px; font-weight: 500;">
+                        ✅ Settings saved successfully! Menus updated on WordPress dashboard.
+                    </div>
+                <?php endif; ?>
 
-				// Unselect All buttons
-				document.querySelectorAll('.eac-unselect-all').forEach(btn => {
-					btn.addEventListener('click', function(e) {
-						e.preventDefault();
-						const container = this.closest('.eac-tab-content');
-						const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-						checkboxes.forEach(cb => cb.checked = false);
-					});
-				});
+                <form method="POST" style="margin-bottom: 20px;">
+                    <?php wp_nonce_field( 'eac_nonce' ); ?>
+                    <input type="hidden" name="eac_save_menus" value="1">
 
-				// Save buttons
-				document.querySelectorAll('.eac-save-settings').forEach(btn => {
-					btn.addEventListener('click', function(e) {
-						e.preventDefault();
-						eacSaveSettings(this);
-					});
-				});
-			});
+                    <div style="background: #f8f9fa; padding: 20px; border-radius: 6px; margin-bottom: 20px; border-left: 4px solid #667eea;">
+                        <h3 style="margin-top: 0; color: #333; font-size: 16px; margin-bottom: 15px;">📋 Available Menus - Check to HIDE</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">
+                            <?php if ( ! empty( $all_menus ) ) : ?>
+                                <?php foreach ( $all_menus as $menu_slug => $menu_data ) : ?>
+                                    <label style="display: flex; align-items: center; padding: 10px; background: white; border-radius: 4px; border: 1px solid #e0e0e0; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9f9f9'; this.style.borderColor='#667eea';" onmouseout="this.style.background='white'; this.style.borderColor='#e0e0e0';">
+                                        <input type="checkbox" name="hidden_menus[]" value="<?php echo esc_attr( $menu_slug ); ?>" <?php checked( in_array( $menu_slug, $hidden_menus ) ); ?> style="margin-right: 10px; width: 18px; height: 18px; cursor: pointer;">
+                                        <span style="flex: 1; color: #333; font-weight: 500; font-size: 14px;"><?php echo esc_html( $menu_data['title'] ); ?></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            <?php else : ?>
+                                <p style="color: #999; grid-column: 1 / -1;">No menus found</p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
 
-			function eacSaveSettings(btn) {
-				const container = btn.closest('.eac-tab-content');
-				const tabId = container.id;
-				const allCheckboxes = document.querySelectorAll('.eac-tab-content input[type="checkbox"]');
-				
-				const showItems = [];
-				const hideItems = [];
-				
-				// Get show items (checked in show-menu tab)
-				document.querySelectorAll('#eac-tab-show-menu input[type="checkbox"]:checked').forEach(cb => {
-					showItems.push(cb.value);
-				});
-				
-				// Get hide items (checked in hide-menu tab)
-				document.querySelectorAll('#eac-tab-hide-menu input[type="checkbox"]:checked').forEach(cb => {
-					hideItems.push(cb.value);
-				});
+                    <div style="display: flex; gap: 10px;">
+                        <button type="submit" class="button button-primary" style="background: #28a745; border-color: #28a745; padding: 12px 30px; font-size: 14px; font-weight: 600;">
+                            💾 Save & Hide Selected Menus
+                        </button>
+                        
+                        <button type="button" onclick="if(confirm('Show all menus?')) { document.querySelectorAll('input[name=\"hidden_menus[]\"]').forEach(cb => cb.checked = false); document.querySelector('form').submit(); }" class="button" style="background: #17a2b8; color: white; border: none; padding: 12px 30px; font-size: 14px; font-weight: 600; border-radius: 4px; cursor: pointer;">
+                            👁️ Show All Menus
+                        </button>
+                    </div>
+                </form>
 
-				console.log('Show Items:', showItems);
-				console.log('Hide Items:', hideItems);
-
-				const formData = new FormData();
-				formData.append('action', 'eac_update_settings');
-				formData.append('nonce', eacNonce);
-				formData.append('show_items', JSON.stringify(showItems));
-				formData.append('hide_items', JSON.stringify(hideItems));
-
-				fetch(ajaxurl, {
-					method: 'POST',
-					body: formData
-				})
-				.then(response => response.json())
-				.then(data => {
-					const msgDiv = container.querySelector('.eac-status-message');
-					
-					if (data.success) {
-						msgDiv.textContent = '✓ Settings saved successfully!';
-						msgDiv.classList.remove('error');
-						msgDiv.classList.add('success');
-						console.log('Success');
-					} else {
-						msgDiv.textContent = data.data || 'Error saving settings';
-						msgDiv.classList.remove('success');
-						msgDiv.classList.add('error');
-					}
-					msgDiv.style.display = 'block';
-					setTimeout(() => {
-						msgDiv.style.display = 'none';
-					}, 4000);
-				})
-				.catch(error => {
-					console.error('Error:', error);
-					const msgDiv = container.querySelector('.eac-status-message');
-					msgDiv.textContent = 'Error: ' + error.message;
-					msgDiv.classList.add('error');
-					msgDiv.style.display = 'block';
-				});
-			}
-		</script>
-		<?php
-	}
-
-	private function render_show_menu_tab( $menus, $restricted ) {
-		?>
-		<div id="eac-tab-show-menu" class="eac-tab-content active" data-tab="show-menu">
-			<div class="eac-status-message"></div>
-			
-			<div class="eac-info-box">
-				<p>✓ Check all items that should be VISIBLE in sidebar. Only checked items will appear.</p>
-			</div>
-
-			<div style="margin-bottom: 15px;">
-				<button class="eac-button eac-select-all" style="background-color: #28a745; border-color: #28a745;"><?php esc_html_e( 'Select All (Show Everything)', 'enterprise-access-control' ); ?></button>
-				<button class="eac-button eac-unselect-all" style="background-color: #dc3545; border-color: #dc3545;"><?php esc_html_e( 'Unselect All (Hide Everything)', 'enterprise-access-control' ); ?></button>
-			</div>
-
-			<h3><?php esc_html_e( 'Visible Menu Items', 'enterprise-access-control' ); ?></h3>
-			<ul class="eac-checkbox-list">
-				<?php if ( ! empty( $menus ) ) : ?>
-					<?php foreach ( $menus as $slug => $menu ) : ?>
-						<li>
-							<input type="checkbox" id="show-menu-<?php echo esc_attr( $slug ); ?>" value="<?php echo esc_attr( $slug ); ?>" <?php checked( ! in_array( $slug, $restricted ) ); ?> />
-							<label for="show-menu-<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $menu['title'] ); ?></label>
-						</li>
-						<?php if ( ! empty( $menu['submenu_items'] ) ) : ?>
-							<?php foreach ( $menu['submenu_items'] as $sub_slug => $sub_menu ) : ?>
-								<li style="padding-left: 40px;">
-									<input type="checkbox" id="show-menu-<?php echo esc_attr( $sub_slug ); ?>" value="<?php echo esc_attr( $sub_slug ); ?>" <?php checked( ! in_array( $sub_slug, $restricted ) ); ?> />
-									<label for="show-menu-<?php echo esc_attr( $sub_slug ); ?>"><?php echo esc_html( $sub_menu['title'] ); ?></label>
-								</li>
-							<?php endforeach; ?>
-						<?php endif; ?>
-					<?php endforeach; ?>
-				<?php else : ?>
-					<li><p><?php esc_html_e( 'No menus found', 'enterprise-access-control' ); ?></p></li>
-				<?php endif; ?>
-			</ul>
-
-			<div class="eac-button-group">
-				<button class="eac-button eac-save-settings"><?php esc_html_e( 'Save Visibility Settings', 'enterprise-access-control' ); ?></button>
-			</div>
-		</div>
-		<?php
-	}
-
-	private function render_hide_menu_tab( $menus, $restricted ) {
-		?>
-		<div id="eac-tab-hide-menu" class="eac-tab-content" data-tab="hide-menu">
-			<div class="eac-status-message"></div>
-			
-			<div class="eac-info-box">
-				<p>✗ Check all items that should be HIDDEN from sidebar. These items won't be visible anywhere.</p>
-			</div>
-
-			<div style="margin-bottom: 15px;">
-				<button class="eac-button eac-select-all" style="background-color: #dc3545; border-color: #dc3545;"><?php esc_html_e( 'Select All (Hide Everything)', 'enterprise-access-control' ); ?></button>
-				<button class="eac-button eac-unselect-all" style="background-color: #28a745; border-color: #28a745;"><?php esc_html_e( 'Unselect All (Show Everything)', 'enterprise-access-control' ); ?></button>
-			</div>
-
-			<h3><?php esc_html_e( 'Hidden Menu Items', 'enterprise-access-control' ); ?></h3>
-			<ul class="eac-checkbox-list">
-				<?php if ( ! empty( $menus ) ) : ?>
-					<?php foreach ( $menus as $slug => $menu ) : ?>
-						<li>
-							<input type="checkbox" id="hide-menu-<?php echo esc_attr( $slug ); ?>" value="<?php echo esc_attr( $slug ); ?>" <?php checked( in_array( $slug, $restricted ) ); ?> />
-							<label for="hide-menu-<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $menu['title'] ); ?></label>
-						</li>
-						<?php if ( ! empty( $menu['submenu_items'] ) ) : ?>
-							<?php foreach ( $menu['submenu_items'] as $sub_slug => $sub_menu ) : ?>
-								<li style="padding-left: 40px;">
-									<input type="checkbox" id="hide-menu-<?php echo esc_attr( $sub_slug ); ?>" value="<?php echo esc_attr( $sub_slug ); ?>" <?php checked( in_array( $sub_slug, $restricted ) ); ?> />
-									<label for="hide-menu-<?php echo esc_attr( $sub_slug ); ?>"><?php echo esc_html( $sub_menu['title'] ); ?></label>
-								</li>
-							<?php endforeach; ?>
-						<?php endif; ?>
-					<?php endforeach; ?>
-				<?php else : ?>
-					<li><p><?php esc_html_e( 'No menus found', 'enterprise-access-control' ); ?></p></li>
-				<?php endif; ?>
-			</ul>
-
-			<div class="eac-button-group">
-				<button class="eac-button eac-save-settings"><?php esc_html_e( 'Save Visibility Settings', 'enterprise-access-control' ); ?></button>
-			</div>
-		</div>
-		<?php
-	}
-
-	private function render_security_tab() {
-		?>
-		<div id="eac-tab-security" class="eac-tab-content" data-tab="security">
-			<div class="eac-status-message"></div>
-			
-			<h3><?php esc_html_e( 'Change Master Password', 'enterprise-access-control' ); ?></h3>
-			<p><strong><?php esc_html_e( 'Current Password:', 'enterprise-access-control' ); ?></strong> <code style="background: #f1f1f1; padding: 8px 12px; border-radius: 3px; font-family: monospace;">99999999999999999999</code></p>
-			
-			<div style="max-width: 400px; margin-top: 20px;">
-				<label style="display: block; margin-bottom: 10px; font-weight: 600;"><?php esc_html_e( 'New Password:', 'enterprise-access-control' ); ?></label>
-				<input type="password" id="eac-new-password" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px; font-size: 14px;" />
-				
-				<label style="display: block; margin-bottom: 10px; font-weight: 600;"><?php esc_html_e( 'Confirm Password:', 'enterprise-access-control' ); ?></label>
-				<input type="password" id="eac-confirm-password" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 20px; font-size: 14px;" />
-
-				<button class="eac-button" id="eac-change-password-btn"><?php esc_html_e( 'Update Password', 'enterprise-access-control' ); ?></button>
-			</div>
-
-			<script>
-				document.getElementById('eac-change-password-btn').addEventListener('click', function() {
-					const newPassword = document.getElementById('eac-new-password').value;
-					const confirmPassword = document.getElementById('eac-confirm-password').value;
-					const msgDiv = document.querySelector('#eac-tab-security .eac-status-message');
-
-					if (!newPassword) {
-						msgDiv.textContent = '✗ Please enter a new password';
-						msgDiv.classList.remove('success');
-						msgDiv.classList.add('error');
-						msgDiv.style.display = 'block';
-						return;
-					}
-
-					if (newPassword !== confirmPassword) {
-						msgDiv.textContent = '✗ Passwords do not match';
-						msgDiv.classList.remove('success');
-						msgDiv.classList.add('error');
-						msgDiv.style.display = 'block';
-						return;
-					}
-
-					if (newPassword.length < 8) {
-						msgDiv.textContent = '✗ Password must be at least 8 characters';
-						msgDiv.classList.remove('success');
-						msgDiv.classList.add('error');
-						msgDiv.style.display = 'block';
-						return;
-					}
-
-					const formData = new FormData();
-					formData.append('action', 'eac_change_password');
-					formData.append('nonce', eacNonce);
-					formData.append('password', newPassword);
-
-					fetch(ajaxurl, {
-						method: 'POST',
-						body: formData
-					})
-					.then(response => response.json())
-					.then(data => {
-						if (data.success) {
-							msgDiv.textContent = '✓ Password updated successfully!';
-							msgDiv.classList.remove('error');
-							msgDiv.classList.add('success');
-							document.getElementById('eac-new-password').value = '';
-							document.getElementById('eac-confirm-password').value = '';
-						} else {
-							msgDiv.textContent = data.data || '✗ Error updating password';
-							msgDiv.classList.remove('success');
-							msgDiv.classList.add('error');
-						}
-						msgDiv.style.display = 'block';
-					});
-				});
-			</script>
-		</div>
-		<?php
-	}
-
-	public function ajax_update_settings() {
-		check_ajax_referer( 'eac_nonce', 'nonce' );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( 'Insufficient permissions' );
-		}
-
-		$show_items = isset( $_POST['show_items'] ) ? json_decode( sanitize_text_field( $_POST['show_items'] ), true ) : array();
-		$hide_items = isset( $_POST['hide_items'] ) ? json_decode( sanitize_text_field( $_POST['hide_items'] ), true ) : array();
-
-		if ( ! is_array( $show_items ) ) {
-			$show_items = array();
-		}
-		if ( ! is_array( $hide_items ) ) {
-			$hide_items = array();
-		}
-
-		$settings = EAC_Visibility_Manager::get_settings();
-		$settings['sidebar_menus'] = array_map( 'sanitize_text_field', $hide_items );
-
-		if ( EAC_Visibility_Manager::update_settings( $settings ) ) {
-			wp_send_json_success( array( 'message' => 'Settings updated successfully' ) );
-		} else {
-			wp_send_json_error( 'Failed to update settings' );
-		}
-	}
-
-	public function ajax_change_password() {
-		check_ajax_referer( 'eac_nonce', 'nonce' );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( 'Insufficient permissions' );
-		}
-
-		$password = isset( $_POST['password'] ) ? sanitize_text_field( $_POST['password'] ) : '';
-
-		if ( empty( $password ) ) {
-			wp_send_json_error( 'Password is required' );
-		}
-
-		if ( EAC_Security::change_password( $password ) ) {
-			wp_send_json_success( array( 'message' => 'Password updated successfully' ) );
-		} else {
-			wp_send_json_error( 'Failed to update password' );
-		}
-	}
+                <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 4px; margin-top: 20px; font-size: 14px; color: #856404;">
+                    <strong>📌 Note:</strong> After saving, exit this page and the hidden menus will disappear from your WordPress dashboard. Come back and enter password again to show them.
+                </div>
+            </div>
+        </div>
+        <?php
+    }
 }
 
-EAC_Admin::get_instance();
+// Initialize admin on admin_init
+add_action( 'admin_init', array( 'EAC_Admin', 'init' ) );
